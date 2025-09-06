@@ -1,8 +1,8 @@
-// use indicatif::ParallelProgressIterator; // progress bars removed for speed
+use indicatif::ParallelProgressIterator;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use rand::{rngs::SmallRng, seq::{IndexedRandom, IteratorRandom}, Rng, SeedableRng};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 
 use crate::{
     ant::Ant,
@@ -91,10 +91,10 @@ impl GeneticSelector {
 
     pub fn evaluate_generation(&mut self) -> Vec<Option<f64>> {
         let iters = self.eval_iterations;
-        (0..self.generation.len())
-            .into_par_iter()
-            .map(|i| {
-                let p = &self.generation[i];
+        self.generation
+            .par_iter()
+            .progress()
+            .map(|p| {
                 let key = Self::hash_params(p);
                 if let Some(v) = self.eval_cache.get(&key) {
                     return Some(*v);
@@ -111,22 +111,25 @@ impl GeneticSelector {
     }
 
     pub fn sex(&mut self) {
-        let mut rng = SmallRng::from_os_rng();
         // Elitism already handled in kill_dump by truncating; here we refill the population.
-        while self.generation.len() < self.target_population {
-            let child = if rng.random_bool(0.85) {
-                // Tournament selection
-                let p1 = self.tournament_select(&mut rng).clone();
-                let p2 = self.tournament_select(&mut rng).clone();
-                let mut c = self.blx_crossover(&p1, &p2, self.blx_alpha, &mut rng);
-                // Mutation
-                self.mutate(&mut c, &mut rng);
-                c
-            } else {
-                // random immigrant
-                self.parameter_range.clone().random(&mut rng)
-            };
-            self.generation.push(child);
+        let needed = self.target_population.saturating_sub(self.generation.len());
+        if needed > 0 {
+            let children: Vec<Parameters> = (0..needed)
+                .into_par_iter()
+                .map(|_| {
+                    let mut rng = SmallRng::from_os_rng();
+                    if rng.random_bool(0.85) {
+                        let p1 = self.tournament_select(&mut rng).clone();
+                        let p2 = self.tournament_select(&mut rng).clone();
+                        let mut c = self.blx_crossover(&p1, &p2, self.blx_alpha, &mut rng);
+                        self.mutate(&mut c, &mut rng);
+                        c
+                    } else {
+                        self.parameter_range.clone().random(&mut rng)
+                    }
+                })
+                .collect();
+            self.generation.extend(children);
         }
         self.generation_idx += 1;
     }
@@ -140,7 +143,7 @@ impl GeneticSelector {
             .map(|(a, b)| (a.clone(), b.unwrap()))
             .collect();
 
-        v.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+    v.par_sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
 
         if let Some((best_p, best_s)) = v.first().map(|(p, s)| (p.clone(), *s)) {
             println!(
@@ -170,18 +173,22 @@ impl GeneticSelector {
             return self.generation.choose(rng).expect("empty generation");
         }
         let k = self.tournament_k.max(1);
-        self.generation
+        let candidates = self
+            .generation
             .iter()
             .take(self.top_n.min(self.generation.len()))
-            .choose_multiple(rng, k)
-            .into_iter()
-            .min_by(|a, b| self.rough_cost(a).total_cmp(&self.rough_cost(b)))
-            .unwrap_or_else(|| self.get_random_one(rng))
-    }
-
-    fn rough_cost(&self, p: &Parameters) -> f64 {
-        // quick proxy: run one very short eval or use heuristic; here just 1 iteration best-effort
-        run_one(3, p, &self.tsp).unwrap_or(f64::INFINITY)
+            .choose_multiple(rng, k);
+        let best = candidates
+            .iter()
+            .min_by(|a, b| {
+                let ka = Self::hash_params(a);
+                let kb = Self::hash_params(b);
+                let ca = self.eval_cache.get(&ka).copied().unwrap_or(f64::INFINITY);
+                let cb = self.eval_cache.get(&kb).copied().unwrap_or(f64::INFINITY);
+                ca.total_cmp(&cb)
+            })
+            .copied();
+        best.unwrap_or_else(|| self.get_random_one(rng))
     }
 
     fn blx_crossover(
