@@ -64,9 +64,9 @@ impl GeneticSelector {
         }
     }
 
-    pub fn create_first_generation(&mut self, n: usize) {
+    pub fn create_first_generation(&mut self) {
         let mut rng = SmallRng::from_os_rng();
-        self.generation = (0..n)
+        self.generation = (0..self.target_population)
             .map(|_| self.parameter_range.clone().random(&mut rng))
             .collect();
     }
@@ -86,21 +86,28 @@ impl GeneticSelector {
     pub fn sex(&mut self) {
         let mut rng = SmallRng::from_os_rng();
         while self.generation.len() < self.target_population {
-            let p1 = self.get_random_one(&mut rng).clone();
-            let p2 = self.get_random_one(&mut rng).clone();
+            if rng.random_bool(0.8) {
+                let p1 = self.get_random_one(&mut rng).clone();
+                let p2 = self.get_random_one(&mut rng).clone();
 
-            let generator = ParametersRange {
-                ants: p1.ants.min(p2.ants)..=p1.ants.max(p2.ants),
-                initial_pheromone_level: p1.initial_pheromone_level.min(p2.initial_pheromone_level)
-                    ..=p1.initial_pheromone_level.max(p2.initial_pheromone_level),
-                alpha: p1.alpha.min(p2.alpha)..=p1.alpha.max(p2.alpha),
-                beta: p1.beta.min(p2.beta)..=p1.beta.max(p2.beta),
-                tau0: p1.tau0.min(p2.tau0)..=p1.tau0.max(p2.tau0),
-                p_of_take_best_path: p1.p_of_take_best_path.min(p2.p_of_take_best_path)
-                    ..=p1.p_of_take_best_path.max(p2.p_of_take_best_path),
-            };
+                let generator = ParametersRange {
+                    ants: p1.ants.min(p2.ants)..=p1.ants.max(p2.ants),
+                    initial_pheromone_level: p1
+                        .initial_pheromone_level
+                        .min(p2.initial_pheromone_level)
+                        ..=p1.initial_pheromone_level.max(p2.initial_pheromone_level),
+                    alpha: p1.alpha.min(p2.alpha)..=p1.alpha.max(p2.alpha),
+                    beta: p1.beta.min(p2.beta)..=p1.beta.max(p2.beta),
+                    tau0: p1.tau0.min(p2.tau0)..=p1.tau0.max(p2.tau0),
+                    p_of_take_best_path: p1.p_of_take_best_path.min(p2.p_of_take_best_path)
+                        ..=p1.p_of_take_best_path.max(p2.p_of_take_best_path),
+                };
 
-            self.generation.push(generator.random(&mut rng));
+                self.generation.push(generator.random(&mut rng));
+            } else {
+                self.generation
+                    .push(self.parameter_range.clone().random(&mut rng));
+            }
         }
     }
 
@@ -114,8 +121,10 @@ impl GeneticSelector {
             .collect();
 
         v.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
-        v.reverse();
 
+        // for a in &v {
+        //     println!("Score: {} with {:?}", a.1, a.0);
+        // }
         let best = v.first().expect("First");
         println!("Best: {} with {:#?}", best.1, best.0);
 

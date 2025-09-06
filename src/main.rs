@@ -17,21 +17,21 @@ fn main() {
 
     let mut gs = GeneticSelector::new(
         ParametersRange {
-            ants: 10..=20,
-            initial_pheromone_level: 0.8..=1.0,
+            ants: 1..=30,
+            initial_pheromone_level: 0.0..=1.0,
             alpha: 0.0..=1.0,
-            beta: 0.0..=10.0,
+            beta: 0.0..=20.0,
             tau0: 0.0..=5.0,
             p_of_take_best_path: 0.0..=1.0,
         },
-        10,
-        20,
+        100,
+        200,
         t,
-        50,
+        2000,
     );
 
+    gs.create_first_generation();
     loop {
-        gs.create_first_generation(30);
         let scores = gs.evaluate_generation();
         gs.kill_dump(&scores);
         gs.sex();

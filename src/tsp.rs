@@ -49,6 +49,15 @@ impl SymmetricTSP {
     pub fn distance_between(&self, c1_idx: usize, c2_idx: usize) -> f64 {
         self.coordinates[c1_idx].distance_to(&self.coordinates[c2_idx])
     }
+
+    pub fn path_length(&self, indexes: &[usize]) -> f64 {
+        indexes
+            .windows(2)
+            .map(|ixs| [&self.coordinates[ixs[0]], &self.coordinates[ixs[1]]])
+            .map(|edge| edge[0].distance_to(edge[1]))
+            .reduce(|v, acum| v + acum)
+            .expect("empty path")
+    }
 }
 
 #[cfg(test)]
