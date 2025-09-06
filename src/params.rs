@@ -1,4 +1,4 @@
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Parameters {
     pub ants: usize,
     pub initial_pheromone_level: f64,

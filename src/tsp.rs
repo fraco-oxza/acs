@@ -3,7 +3,7 @@ use std::{
     io::{self, BufRead, BufReader},
     path::Path,
     rc::Rc,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 
 use regex::Regex;
@@ -12,14 +12,14 @@ use crate::coordinates::Coordinate;
 
 static SPACES_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" +").expect("invalid regex"));
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SymmetricTSP {
     // name: String,
     // comment: String,
     // stype: String,
     // dimension: u32,
     // edge_weight_type: String,
-    pub coordinates: Rc<[Coordinate]>,
+    pub coordinates: Arc<[Coordinate]>,
 }
 
 impl SymmetricTSP {
@@ -42,9 +42,9 @@ impl SymmetricTSP {
             ));
         }
 
-        let coordinates: Rc<[Coordinate]> = coordinates.into();
-
-        Ok(Self { coordinates })
+        Ok(Self {
+            coordinates: coordinates.into(),
+        })
     }
 
     pub fn distance_between(&self, c1_idx: usize, c2_idx: usize) -> f64 {

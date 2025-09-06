@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use rand::{Rng, random_bool, rng, seq::IndexedRandom};
+use rand::{
+    Rng, random_bool, rng,
+    seq::{IndexedRandom, IteratorRandom},
+};
 
 use crate::{params::Parameters, pheromone_trail::PheromoneTrails, tsp::SymmetricTSP};
 
@@ -52,18 +55,19 @@ impl<'a, 'b> Ant<'a, 'b> {
             .map(|v| v.0)
     }
 
-    fn choose_probabilistic(&self, pt: &mut PheromoneTrails) -> Option<usize> {
+    fn choose_probabilistic(&self, pt: &mut PheromoneTrails) -> usize {
         self.get_all_path_scores(pt)
             .choose_weighted(&mut rng(), |(_, w)| *w)
             .map(|v| v.0)
-            .ok()
+            .inspect_err(|e| eprintln!("{e}"))
+            .unwrap_or_else(|_| *self.not_visited.iter().choose(&mut rng()).unwrap())
     }
 
     fn choose_next_coord(&self, pt: &mut PheromoneTrails) -> Option<usize> {
         if random_bool(self.params.p_of_take_best_path) {
             self.choose_the_best(pt)
         } else {
-            self.choose_probabilistic(pt)
+            Some(self.choose_probabilistic(pt))
         }
     }
 
