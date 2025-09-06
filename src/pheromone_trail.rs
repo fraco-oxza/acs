@@ -11,10 +11,10 @@ pub struct PheromoneTrails<'a> {
 }
 
 impl<'a> PheromoneTrails<'a> {
-    pub fn new(params: &'a Parameters) -> Self {
+    pub fn new(params: &'a Parameters, capacity: usize) -> Self {
         Self {
             params,
-            levels: HashMap::default(),
+            levels: HashMap::with_capacity(capacity),
         }
     }
 
@@ -52,4 +52,3 @@ impl<'a> PheromoneTrails<'a> {
         self.levels.insert(edge, val);
     }
 }
-

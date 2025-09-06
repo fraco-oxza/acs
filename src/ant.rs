@@ -1,13 +1,31 @@
-use std::collections::HashSet;
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::{LazyLock, Mutex},
+};
 
 use rand::{
-    Rng, random_bool, rng,
+    Rng, SeedableRng,
+    rngs::{self, SmallRng},
     seq::{IndexedRandom, IteratorRandom},
 };
 
 use crate::{params::Parameters, pheromone_trail::PheromoneTrails, tsp::SymmetricTSP};
 
+pub type AntSet = HashSet<usize>;
+static NOT_VISITED_CACHE: LazyLock<Mutex<BTreeMap<usize, AntSet>>> =
+    LazyLock::new(|| Mutex::default());
+
+fn get_set_of_not_visited(size: usize) -> AntSet {
+    NOT_VISITED_CACHE
+        .lock()
+        .expect("failed to lock")
+        .entry(size)
+        .or_insert_with(|| (0..size).collect())
+        .clone()
+}
+
 pub struct Ant<'a, 'b> {
+    rng: rngs::SmallRng,
     params: &'b Parameters,
     tsp: &'a SymmetricTSP,
     current_coordinate: usize,
@@ -18,16 +36,19 @@ pub struct Ant<'a, 'b> {
 
 impl<'a, 'b> Ant<'a, 'b> {
     pub fn with_random_start(tsp: &'a SymmetricTSP, params: &'b Parameters) -> Self {
-        let mut rng = rng();
+        let mut rng = SmallRng::from_os_rng();
         let current_coordinate = rng.random_range(0..tsp.coordinates.len());
 
-        let mut not_visited: HashSet<usize> = (0..tsp.coordinates.len()).collect();
+        let mut not_visited = get_set_of_not_visited(tsp.coordinates.len());
         not_visited.remove(&current_coordinate);
+        let mut path_arr = Vec::with_capacity(tsp.coordinates.len());
+        path_arr.push(current_coordinate);
 
         Self {
+            rng,
             tsp,
             current_coordinate,
-            path_arr: vec![current_coordinate],
+            path_arr,
             not_visited,
             path_lenght: 0.0,
             params,
@@ -55,16 +76,16 @@ impl<'a, 'b> Ant<'a, 'b> {
             .map(|v| v.0)
     }
 
-    fn choose_probabilistic(&self, pt: &mut PheromoneTrails) -> usize {
+    fn choose_probabilistic(&mut self, pt: &mut PheromoneTrails) -> usize {
         self.get_all_path_scores(pt)
-            .choose_weighted(&mut rng(), |(_, w)| *w)
+            .choose_weighted(&mut self.rng, |(_, w)| *w)
             .map(|v| v.0)
             .inspect_err(|e| eprintln!("{e}"))
-            .unwrap_or_else(|_| *self.not_visited.iter().choose(&mut rng()).unwrap())
+            .unwrap_or_else(|_| *self.not_visited.iter().choose(&mut self.rng).unwrap())
     }
 
-    fn choose_next_coord(&self, pt: &mut PheromoneTrails) -> Option<usize> {
-        if random_bool(self.params.p_of_take_best_path) {
+    fn choose_next_coord(&mut self, pt: &mut PheromoneTrails) -> Option<usize> {
+        if self.rng.random_bool(self.params.p_of_take_best_path) {
             self.choose_the_best(pt)
         } else {
             Some(self.choose_probabilistic(pt))
