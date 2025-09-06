@@ -1,4 +1,6 @@
-use indicatif::ParallelProgressIterator;
+// use indicatif::ParallelProgressIterator; // progress bars removed for speed
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use rand::{rngs::SmallRng, seq::{IndexedRandom, IteratorRandom}, Rng, SeedableRng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -12,7 +14,7 @@ use crate::{
 pub struct GeneticSelector {
     parameter_range: ParametersRange,
     generation: Vec<Parameters>,
-    runs: usize,
+    // runs: usize, // removed for speed
     top_n: usize,
     tsp: SymmetricTSP,
     target_population: usize,
@@ -24,6 +26,7 @@ pub struct GeneticSelector {
     eval_iterations: usize,
     // book-keeping
     generation_idx: usize,
+    eval_cache: HashMap<u64, f64>,
 }
 
 pub fn run_one(iterations: usize, parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
@@ -57,14 +60,14 @@ pub fn run_one(iterations: usize, parameters: &Parameters, t: &SymmetricTSP) -> 
 impl GeneticSelector {
     pub fn new(
         parameter_range: ParametersRange,
-        runs: usize,
+    _runs: usize,
         top_n: usize,
         tsp: SymmetricTSP,
         target_population: usize,
     ) -> Self {
         Self {
             parameter_range,
-            runs,
+            // runs,
             generation: Vec::default(),
             top_n,
             tsp,
@@ -73,8 +76,9 @@ impl GeneticSelector {
             mutation_rate: 0.25,
             mutation_sigma: 0.1,
             blx_alpha: 0.3,
-            eval_iterations: 30,
+            eval_iterations: 12,
             generation_idx: 0,
+            eval_cache: HashMap::with_capacity(target_population * 2),
         }
     }
 
@@ -85,21 +89,19 @@ impl GeneticSelector {
             .collect();
     }
 
-    pub fn evaluate_generation(&self) -> Vec<Option<f64>> {
-        // Evaluate each candidate over multiple runs to reduce noise
+    pub fn evaluate_generation(&mut self) -> Vec<Option<f64>> {
         let iters = self.eval_iterations;
-    (0..self.generation.len())
+        (0..self.generation.len())
             .into_par_iter()
-            .progress()
             .map(|i| {
                 let p = &self.generation[i];
-                let mut best: Option<f64> = None;
-                for _ in 0..self.runs.max(1) {
-                    if let Some(score) = run_one(iters, p, &self.tsp) {
-                        best = Some(match best { Some(b) => b.min(score), None => score });
-                    }
+                let key = Self::hash_params(p);
+                if let Some(v) = self.eval_cache.get(&key) {
+                    return Some(*v);
                 }
-                best
+                let sc = run_one(iters, p, &self.tsp);
+                // caching skipped inside parallel loop to avoid locks
+                sc
             })
             .collect()
     }
@@ -147,8 +149,17 @@ impl GeneticSelector {
             );
         }
 
-        // Elitism: keep top_n
-        self.generation = v.into_iter().map(|(a, _)| a).take(self.top_n).collect();
+        // Elitism: keep top_n and refresh cache for elites
+        self.eval_cache.clear();
+        self.generation = v
+            .into_iter()
+            .map(|(a, s)| {
+                let key = Self::hash_params(&a);
+                self.eval_cache.insert(key, s);
+                a
+            })
+            .take(self.top_n)
+            .collect();
     }
 
     // ---- GA operators ----
@@ -232,5 +243,17 @@ impl GeneticSelector {
         n(&mut p.tau0, t_span);
         n(&mut p.p_of_take_best_path, p_span);
         self.parameter_range.clamp(p);
+    }
+
+    fn hash_params(p: &Parameters) -> u64 {
+        let mut h = DefaultHasher::new();
+        // Quantize floats to bits (stable) and hash fields
+        p.ants.hash(&mut h);
+        p.initial_pheromone_level.to_bits().hash(&mut h);
+        p.alpha.to_bits().hash(&mut h);
+        p.beta.to_bits().hash(&mut h);
+        p.tau0.to_bits().hash(&mut h);
+        p.p_of_take_best_path.to_bits().hash(&mut h);
+        h.finish()
     }
 }
