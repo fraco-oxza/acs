@@ -1,6 +1,6 @@
 use indicatif::ParallelProgressIterator;
-use rand::{Rng, SeedableRng, rngs::SmallRng, seq::IndexedRandom};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rand::{rngs::SmallRng, seq::{IndexedRandom, IteratorRandom}, Rng, SeedableRng};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{
     ant::Ant,
@@ -16,6 +16,14 @@ pub struct GeneticSelector {
     top_n: usize,
     tsp: SymmetricTSP,
     target_population: usize,
+    // GA hyperparameters
+    tournament_k: usize,
+    mutation_rate: f64,
+    mutation_sigma: f64,
+    blx_alpha: f64,
+    eval_iterations: usize,
+    // book-keeping
+    generation_idx: usize,
 }
 
 pub fn run_one(iterations: usize, parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
@@ -61,6 +69,12 @@ impl GeneticSelector {
             top_n,
             tsp,
             target_population,
+            tournament_k: 3,
+            mutation_rate: 0.25,
+            mutation_sigma: 0.1,
+            blx_alpha: 0.3,
+            eval_iterations: 30,
+            generation_idx: 0,
         }
     }
 
@@ -72,43 +86,47 @@ impl GeneticSelector {
     }
 
     pub fn evaluate_generation(&self) -> Vec<Option<f64>> {
-        self.generation
-            .par_iter()
+        // Evaluate each candidate over multiple runs to reduce noise
+        let iters = self.eval_iterations;
+    (0..self.generation.len())
+            .into_par_iter()
             .progress()
-            .map(|p| run_one(20, &p, &self.tsp))
+            .map(|i| {
+                let p = &self.generation[i];
+                let mut best: Option<f64> = None;
+                for _ in 0..self.runs.max(1) {
+                    if let Some(score) = run_one(iters, p, &self.tsp) {
+                        best = Some(match best { Some(b) => b.min(score), None => score });
+                    }
+                }
+                best
+            })
             .collect()
     }
 
-    fn get_random_one(&mut self, rng: &mut impl Rng) -> &Parameters {
+    fn get_random_one(&self, rng: &mut impl Rng) -> &Parameters {
         self.generation.choose(rng).expect("Generation is empty")
     }
 
     pub fn sex(&mut self) {
         let mut rng = SmallRng::from_os_rng();
+        // Elitism already handled in kill_dump by truncating; here we refill the population.
         while self.generation.len() < self.target_population {
-            if rng.random_bool(0.8) {
-                let p1 = self.get_random_one(&mut rng).clone();
-                let p2 = self.get_random_one(&mut rng).clone();
-
-                let generator = ParametersRange {
-                    ants: p1.ants.min(p2.ants)..=p1.ants.max(p2.ants),
-                    initial_pheromone_level: p1
-                        .initial_pheromone_level
-                        .min(p2.initial_pheromone_level)
-                        ..=p1.initial_pheromone_level.max(p2.initial_pheromone_level),
-                    alpha: p1.alpha.min(p2.alpha)..=p1.alpha.max(p2.alpha),
-                    beta: p1.beta.min(p2.beta)..=p1.beta.max(p2.beta),
-                    tau0: p1.tau0.min(p2.tau0)..=p1.tau0.max(p2.tau0),
-                    p_of_take_best_path: p1.p_of_take_best_path.min(p2.p_of_take_best_path)
-                        ..=p1.p_of_take_best_path.max(p2.p_of_take_best_path),
-                };
-
-                self.generation.push(generator.random(&mut rng));
+            let child = if rng.random_bool(0.85) {
+                // Tournament selection
+                let p1 = self.tournament_select(&mut rng).clone();
+                let p2 = self.tournament_select(&mut rng).clone();
+                let mut c = self.blx_crossover(&p1, &p2, self.blx_alpha, &mut rng);
+                // Mutation
+                self.mutate(&mut c, &mut rng);
+                c
             } else {
-                self.generation
-                    .push(self.parameter_range.clone().random(&mut rng));
-            }
+                // random immigrant
+                self.parameter_range.clone().random(&mut rng)
+            };
+            self.generation.push(child);
         }
+        self.generation_idx += 1;
     }
 
     pub fn kill_dump(&mut self, scores: &[Option<f64>]) {
@@ -122,12 +140,97 @@ impl GeneticSelector {
 
         v.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
 
-        // for a in &v {
-        //     println!("Score: {} with {:?}", a.1, a.0);
-        // }
-        let best = v.first().expect("First");
-        println!("Best: {} with {:#?}", best.1, best.0);
+        if let Some((best_p, best_s)) = v.first().map(|(p, s)| (p.clone(), *s)) {
+            println!(
+                "Gen {:04} | Best length: {:.5} | params: {:#?}",
+                self.generation_idx, best_s, best_p
+            );
+        }
 
+        // Elitism: keep top_n
         self.generation = v.into_iter().map(|(a, _)| a).take(self.top_n).collect();
+    }
+
+    // ---- GA operators ----
+    fn tournament_select(&self, rng: &mut impl Rng) -> &Parameters {
+        // Uniform random K candidates, pick best score among current elites (front of vector)
+        // If we haven't evaluated, fallback to random
+        if self.generation.is_empty() {
+            return self.generation.choose(rng).expect("empty generation");
+        }
+        let k = self.tournament_k.max(1);
+        self.generation
+            .iter()
+            .take(self.top_n.min(self.generation.len()))
+            .choose_multiple(rng, k)
+            .into_iter()
+            .min_by(|a, b| self.rough_cost(a).total_cmp(&self.rough_cost(b)))
+            .unwrap_or_else(|| self.get_random_one(rng))
+    }
+
+    fn rough_cost(&self, p: &Parameters) -> f64 {
+        // quick proxy: run one very short eval or use heuristic; here just 1 iteration best-effort
+        run_one(3, p, &self.tsp).unwrap_or(f64::INFINITY)
+    }
+
+    fn blx_crossover(
+        &self,
+        p1: &Parameters,
+        p2: &Parameters,
+        alpha: f64,
+        rng: &mut impl Rng,
+    ) -> Parameters {
+        fn lerp_f(rng: &mut impl Rng, a: f64, b: f64, alpha: f64) -> f64 {
+            let (min, max) = (a.min(b), a.max(b));
+            let d = max - min;
+            let low = min - alpha * d;
+            let high = max + alpha * d;
+            rng.random_range(low..=high)
+        }
+        let ants = {
+            let a = p1.ants.min(p2.ants);
+            let b = p1.ants.max(p2.ants);
+            let span = (b - a).max(1) as i64;
+            let low = a as i64 - ((alpha * span as f64).round() as i64);
+            let high = b as i64 + ((alpha * span as f64).round() as i64);
+            rng.random_range(low..=high).max(0) as usize
+        };
+        let mut child = Parameters {
+            ants,
+            initial_pheromone_level: lerp_f(rng, p1.initial_pheromone_level, p2.initial_pheromone_level, alpha),
+            alpha: lerp_f(rng, p1.alpha, p2.alpha, alpha),
+            beta: lerp_f(rng, p1.beta, p2.beta, alpha),
+            tau0: lerp_f(rng, p1.tau0, p2.tau0, alpha),
+            p_of_take_best_path: lerp_f(rng, p1.p_of_take_best_path, p2.p_of_take_best_path, alpha),
+        };
+        self.parameter_range.clamp(&mut child);
+        child
+    }
+
+    fn mutate(&self, p: &mut Parameters, rng: &mut impl Rng) {
+        let rate = self.mutation_rate;
+        if rng.random_bool(rate) {
+            // integer mutation: +/- step scaled by span
+            let (ants_span, _, _, _, _, _) = self.parameter_range.spans();
+            let step = ((ants_span as f64).sqrt().max(1.0)).round() as i64;
+            let delta = rng.random_range(-step..=step);
+            let new_val = p.ants as i64 + delta;
+            p.ants = new_val.max(*self.parameter_range.ants.start() as i64) as usize;
+        }
+        let mut n = |x: &mut f64, span: f64| {
+            if rng.random_bool(rate) {
+                let sigma = (self.mutation_sigma * span).max(1e-9);
+                // Box-Muller approx via rand normal not available; use small uniform jitter as fallback
+                let jitter = rng.random_range(-sigma..=sigma);
+                *x += jitter;
+            }
+        };
+        let (_, ip_span, a_span, b_span, t_span, p_span) = self.parameter_range.spans();
+        n(&mut p.initial_pheromone_level, ip_span);
+        n(&mut p.alpha, a_span);
+        n(&mut p.beta, b_span);
+        n(&mut p.tau0, t_span);
+        n(&mut p.p_of_take_best_path, p_span);
+        self.parameter_range.clamp(p);
     }
 }
