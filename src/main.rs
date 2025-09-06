@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use indicatif::ParallelProgressIterator;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{ant::Ant, params::Parameters, pheromone_trail::PheromoneTrails, tsp::SymmetricTSP};
@@ -78,8 +79,9 @@ fn main() {
 
     let mut results: Vec<(Parameters, f64)> = ps
         .par_iter()
+        .progress()
         .map(|p| {
-            let result = run_one(100, p.clone(), &t);
+            let result = run_one(200, p.clone(), &t);
             println!("{:?} => {:?}", p, result);
             (p.clone(), result)
         })
@@ -89,7 +91,8 @@ fn main() {
 
     results.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
 
-    for (para, res) in results.iter().take(20) {
+    println!("Best 30 results:");
+    for (para, res) in results.iter().take(30) {
         println!("{:?} => {:?}", para, res);
     }
 }
