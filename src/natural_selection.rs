@@ -1,12 +1,15 @@
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle};
 use rand::{
     Rng, SeedableRng,
     rngs::SmallRng,
     seq::{IndexedRandom, IteratorRandom},
 };
 use rayon::prelude::*;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{collections::HashMap, time::Duration};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::{Arc, RwLock},
+};
 
 use crate::{
     ant::Ant,
@@ -32,18 +35,17 @@ pub struct GeneticSelector {
 }
 
 pub fn run_one(parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
-    let mut pt = PheromoneTrails::new(parameters, t.coordinates.len().pow(2).div_ceil(2));
+    let pt = PheromoneTrails::new(parameters, t.coordinates.len());
     let mut last_run = None;
 
     for _ in 0..parameters.iterations {
         let mut ants: Vec<Ant> = (0..parameters.ants)
-            .map(|_| Ant::with_random_start(&t, parameters))
+            .map(|_| Ant::with_random_start(&t, parameters, &pt))
             .collect();
 
         for _ in 1..t.coordinates.len() {
-            for ant in &mut ants {
-                ant.move_ant(&mut pt).unwrap();
-            }
+            ants.par_iter_mut()
+                .for_each(|ant| ant.move_ant().expect("Error moving ant"));
         }
 
         let best_ant = ants
@@ -54,6 +56,7 @@ pub fn run_one(parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
         pt.global_update(&best_ant.path_arr, best_ant.get_path_lenght());
 
         last_run = Some(best_ant.get_path_lenght());
+        println!("{last_run:?}");
     }
 
     last_run

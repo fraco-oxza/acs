@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
 use rand::{
@@ -28,6 +28,7 @@ pub struct Ant<'a, 'b> {
     rng: rngs::SmallRng,
     params: &'b Parameters,
     tsp: &'a SymmetricTSP,
+    pheromone_trail: &'a PheromoneTrails<'a>,
     current_coordinate: usize,
     pub path_arr: Vec<usize>,
     not_visited: HashSet<usize>,
@@ -47,7 +48,11 @@ impl<'a, 'b> Ant<'a, 'b> {
         lenght
     }
 
-    pub fn with_random_start(tsp: &'a SymmetricTSP, params: &'b Parameters) -> Self {
+    pub fn with_random_start(
+        tsp: &'a SymmetricTSP,
+        params: &'b Parameters,
+        pheromone_trail: &'a PheromoneTrails<'a>,
+    ) -> Self {
         let mut rng = SmallRng::from_os_rng();
         let current_coordinate = rng.random_range(0..tsp.coordinates.len());
 
@@ -64,50 +69,54 @@ impl<'a, 'b> Ant<'a, 'b> {
             not_visited,
             path_lenght: 0.0,
             params,
+            pheromone_trail,
         }
     }
 
-    fn get_step_score(&self, next_coord: usize, pt: &mut PheromoneTrails) -> f64 {
+    fn get_step_score(&self, next_coord: usize) -> f64 {
         self.tsp
             .distance_between(self.current_coordinate, next_coord)
-            * pt.get_or_create((self.current_coordinate, next_coord))
+            * self
+                .pheromone_trail
+                .get((self.current_coordinate, next_coord))
+                .read()
+                .unwrap()
                 .powf(self.params.beta)
     }
 
-    fn get_all_path_scores(&self, pt: &mut PheromoneTrails) -> Vec<(usize, f64)> {
+    fn get_all_path_scores(&self) -> Vec<(usize, f64)> {
         self.not_visited
             .iter()
-            .map(|idx| (*idx, self.get_step_score(*idx, pt)))
+            .map(|idx| (*idx, self.get_step_score(*idx)))
             .collect()
     }
 
-    fn choose_the_best(&self, pt: &mut PheromoneTrails) -> Option<usize> {
-        self.get_all_path_scores(pt)
+    fn choose_the_best(&self) -> Option<usize> {
+        self.get_all_path_scores()
             .iter()
             .max_by(|(_, score1), (_, score2)| score1.total_cmp(score2))
             .map(|v| v.0)
     }
 
-    fn choose_probabilistic(&mut self, pt: &mut PheromoneTrails) -> usize {
-        self.get_all_path_scores(pt)
+    fn choose_probabilistic(&mut self) -> usize {
+        self.get_all_path_scores()
             .choose_weighted(&mut self.rng, |(_, w)| *w)
             .map(|v| v.0)
             .unwrap_or_else(|_| *self.not_visited.iter().choose(&mut self.rng).unwrap())
     }
 
-    fn choose_next_coord(&mut self, pt: &mut PheromoneTrails) -> Option<usize> {
+    fn choose_next_coord(&mut self) -> Option<usize> {
         if self.rng.random_bool(self.params.p_of_take_best_path) {
-            self.choose_the_best(pt)
+            self.choose_the_best()
         } else {
-            Some(self.choose_probabilistic(pt))
+            Some(self.choose_probabilistic())
         }
     }
 
-    pub fn move_ant(&mut self, pheromone_trail: &mut PheromoneTrails) -> Result<(), &'static str> {
-        let next_coord = self
-            .choose_next_coord(pheromone_trail)
-            .ok_or("no more coords")?;
-        pheromone_trail.local_update(self.current_coordinate, next_coord);
+    pub fn move_ant(&mut self) -> Result<(), &'static str> {
+        let next_coord = self.choose_next_coord().ok_or("no more coords")?;
+        self.pheromone_trail
+            .local_update(self.current_coordinate, next_coord);
 
         self.not_visited.remove(&next_coord);
         self.path_lenght += self
