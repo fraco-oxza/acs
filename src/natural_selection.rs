@@ -1,12 +1,12 @@
-use indicatif::ParallelProgressIterator;
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rand::{
     Rng, SeedableRng,
     rngs::SmallRng,
     seq::{IndexedRandom, IteratorRandom},
 };
 use rayon::prelude::*;
-use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{collections::HashMap, time::Duration};
 
 use crate::{
     ant::Ant,
@@ -18,7 +18,6 @@ use crate::{
 pub struct GeneticSelector {
     parameter_range: ParametersRange,
     generation: Vec<Parameters>,
-    // runs: usize, // removed for speed
     top_n: usize,
     tsp: SymmetricTSP,
     target_population: usize,
@@ -27,17 +26,16 @@ pub struct GeneticSelector {
     mutation_rate: f64,
     mutation_sigma: f64,
     blx_alpha: f64,
-    eval_iterations: usize,
     // book-keeping
     generation_idx: usize,
     eval_cache: HashMap<u64, f64>,
 }
 
-pub fn run_one(iterations: usize, parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
+pub fn run_one(parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
     let mut pt = PheromoneTrails::new(parameters, t.coordinates.len().pow(2).div_ceil(2));
     let mut last_run = None;
 
-    for _ in 0..iterations {
+    for _ in 0..parameters.iterations {
         let mut ants: Vec<Ant> = (0..parameters.ants)
             .map(|_| Ant::with_random_start(&t, parameters))
             .collect();
@@ -64,14 +62,12 @@ pub fn run_one(iterations: usize, parameters: &Parameters, t: &SymmetricTSP) -> 
 impl GeneticSelector {
     pub fn new(
         parameter_range: ParametersRange,
-        _runs: usize,
         top_n: usize,
-        tsp: SymmetricTSP,
         target_population: usize,
+        tsp: SymmetricTSP,
     ) -> Self {
         Self {
             parameter_range,
-            // runs,
             generation: Vec::default(),
             top_n,
             tsp,
@@ -80,7 +76,6 @@ impl GeneticSelector {
             mutation_rate: 0.25,
             mutation_sigma: 0.1,
             blx_alpha: 0.3,
-            eval_iterations: 12,
             generation_idx: 0,
             eval_cache: HashMap::with_capacity(target_population * 2),
         }
@@ -94,19 +89,25 @@ impl GeneticSelector {
     }
 
     pub fn evaluate_generation(&mut self) -> Vec<Option<f64>> {
-        let iters = self.eval_iterations;
+        let style = ProgressStyle::with_template(
+            "[{elapsed_precise}] {bar:80.cyan/blue} {pos:>7}/{len:7} ETA: {eta_precise}",
+        )
+        .expect("invalid progress bar template");
+        let bar = ProgressBar::new(self.generation.len() as u64).with_style(style);
+        bar.enable_steady_tick(Duration::from_secs(1));
+
         self.generation
             .par_iter()
-            .progress()
             .map(|p| {
                 let key = Self::hash_params(p);
                 if let Some(v) = self.eval_cache.get(&key) {
                     return Some(*v);
                 }
-                let sc = run_one(iters, p, &self.tsp);
+                let sc = run_one(p, &self.tsp);
                 // caching skipped inside parallel loop to avoid locks
                 sc
             })
+            .progress_with(bar)
             .collect()
     }
 
@@ -229,6 +230,7 @@ impl GeneticSelector {
             beta: lerp_f(rng, p1.beta, p2.beta, alpha),
             tau0: lerp_f(rng, p1.tau0, p2.tau0, alpha),
             p_of_take_best_path: lerp_f(rng, p1.p_of_take_best_path, p2.p_of_take_best_path, alpha),
+            iterations: lerp_f(rng, p1.iterations as f64, p2.iterations as f64, alpha) as usize,
         };
         self.parameter_range.clamp(&mut child);
         child

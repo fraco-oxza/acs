@@ -92,7 +92,6 @@ impl<'a, 'b> Ant<'a, 'b> {
         self.get_all_path_scores(pt)
             .choose_weighted(&mut self.rng, |(_, w)| *w)
             .map(|v| v.0)
-            .inspect_err(|e| eprintln!("{e}"))
             .unwrap_or_else(|_| *self.not_visited.iter().choose(&mut self.rng).unwrap())
     }
 

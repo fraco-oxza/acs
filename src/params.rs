@@ -1,4 +1,4 @@
-use std::ops::{Range, RangeInclusive};
+use std::ops::RangeInclusive;
 
 use rand::Rng;
 
@@ -10,6 +10,7 @@ pub struct Parameters {
     pub beta: f64,
     pub tau0: f64,
     pub p_of_take_best_path: f64,
+    pub iterations: usize,
 }
 
 #[derive(Clone)]
@@ -20,6 +21,7 @@ pub struct ParametersRange {
     pub beta: RangeInclusive<f64>,
     pub tau0: RangeInclusive<f64>,
     pub p_of_take_best_path: RangeInclusive<f64>,
+    pub iterations: RangeInclusive<usize>,
 }
 
 impl ParametersRange {
@@ -31,6 +33,7 @@ impl ParametersRange {
             beta: rng.random_range(self.beta),
             tau0: rng.random_range(self.tau0),
             p_of_take_best_path: rng.random_range(self.p_of_take_best_path),
+            iterations: rng.random_range(self.iterations),
         }
     }
 
@@ -54,7 +57,10 @@ impl ParametersRange {
             }
         }
 
-        clamp_f(&mut p.initial_pheromone_level, &self.initial_pheromone_level);
+        clamp_f(
+            &mut p.initial_pheromone_level,
+            &self.initial_pheromone_level,
+        );
         clamp_f(&mut p.alpha, &self.alpha);
         clamp_f(&mut p.beta, &self.beta);
         clamp_f(&mut p.tau0, &self.tau0);
