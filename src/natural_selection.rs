@@ -1,8 +1,12 @@
 use indicatif::ParallelProgressIterator;
+use rand::{
+    Rng, SeedableRng,
+    rngs::SmallRng,
+    seq::{IndexedRandom, IteratorRandom},
+};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use rand::{rngs::SmallRng, seq::{IndexedRandom, IteratorRandom}, Rng, SeedableRng};
-use rayon::prelude::*;
 
 use crate::{
     ant::Ant,
@@ -46,12 +50,12 @@ pub fn run_one(iterations: usize, parameters: &Parameters, t: &SymmetricTSP) -> 
 
         let best_ant = ants
             .iter()
-            .min_by(|a, b| a.path_lenght.total_cmp(&b.path_lenght))
+            .min_by(|a, b| a.get_path_lenght().total_cmp(&b.get_path_lenght()))
             .unwrap();
 
-        pt.global_update(&best_ant.path_arr, best_ant.path_lenght);
+        pt.global_update(&best_ant.path_arr, best_ant.get_path_lenght());
 
-        last_run = Some(best_ant.path_lenght);
+        last_run = Some(best_ant.get_path_lenght());
     }
 
     last_run
@@ -60,7 +64,7 @@ pub fn run_one(iterations: usize, parameters: &Parameters, t: &SymmetricTSP) -> 
 impl GeneticSelector {
     pub fn new(
         parameter_range: ParametersRange,
-    _runs: usize,
+        _runs: usize,
         top_n: usize,
         tsp: SymmetricTSP,
         target_population: usize,
@@ -143,7 +147,7 @@ impl GeneticSelector {
             .map(|(a, b)| (a.clone(), b.unwrap()))
             .collect();
 
-    v.par_sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+        v.par_sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
 
         if let Some((best_p, best_s)) = v.first().map(|(p, s)| (p.clone(), *s)) {
             println!(
@@ -215,7 +219,12 @@ impl GeneticSelector {
         };
         let mut child = Parameters {
             ants,
-            initial_pheromone_level: lerp_f(rng, p1.initial_pheromone_level, p2.initial_pheromone_level, alpha),
+            initial_pheromone_level: lerp_f(
+                rng,
+                p1.initial_pheromone_level,
+                p2.initial_pheromone_level,
+                alpha,
+            ),
             alpha: lerp_f(rng, p1.alpha, p2.alpha, alpha),
             beta: lerp_f(rng, p1.beta, p2.beta, alpha),
             tau0: lerp_f(rng, p1.tau0, p2.tau0, alpha),

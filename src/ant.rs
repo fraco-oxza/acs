@@ -31,10 +31,22 @@ pub struct Ant<'a, 'b> {
     current_coordinate: usize,
     pub path_arr: Vec<usize>,
     not_visited: HashSet<usize>,
-    pub path_lenght: f64,
+    path_lenght: f64,
 }
 
 impl<'a, 'b> Ant<'a, 'b> {
+    pub fn get_path_lenght(&self) -> f64 {
+        let mut lenght = self.path_lenght;
+
+        if let Some(start_idx) = self.path_arr.first() {
+            lenght += self
+                .tsp
+                .distance_between(self.current_coordinate, *start_idx);
+        }
+
+        lenght
+    }
+
     pub fn with_random_start(tsp: &'a SymmetricTSP, params: &'b Parameters) -> Self {
         let mut rng = SmallRng::from_os_rng();
         let current_coordinate = rng.random_range(0..tsp.coordinates.len());
