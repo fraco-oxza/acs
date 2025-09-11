@@ -1,18 +1,15 @@
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rand::{
     Rng, SeedableRng,
     rngs::SmallRng,
     seq::{IndexedRandom, IteratorRandom},
 };
 use rayon::prelude::*;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{collections::HashMap, time::Duration};
-use std::{
-    hash::{DefaultHasher, Hash, Hasher},
-    sync::{Arc, RwLock},
-};
 
 use crate::{
-    ant::Ant,
+    ant::{Ant, AntPath},
     params::{Parameters, ParametersRange},
     pheromone_trail::PheromoneTrails,
     tsp::SymmetricTSP,
@@ -34,13 +31,14 @@ pub struct GeneticSelector {
     eval_cache: HashMap<u64, f64>,
 }
 
-pub fn run_one(parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
+#[must_use]
+pub fn run_one(parameters: &Parameters, t: &SymmetricTSP) -> Option<AntPath> {
     let pt = PheromoneTrails::new(parameters, t.coordinates.len());
-    let mut last_run = None;
+    let mut best_run_ant: Option<AntPath> = None;
 
     for _ in 0..parameters.iterations {
         let mut ants: Vec<Ant> = (0..parameters.ants)
-            .map(|_| Ant::with_random_start(&t, parameters, &pt))
+            .map(|_| Ant::with_random_start(t, parameters, &pt))
             .collect();
 
         for _ in 1..t.coordinates.len() {
@@ -55,14 +53,20 @@ pub fn run_one(parameters: &Parameters, t: &SymmetricTSP) -> Option<f64> {
 
         pt.global_update(&best_ant.path_arr, best_ant.get_path_lenght());
 
-        last_run = Some(best_ant.get_path_lenght());
-        println!("{last_run:?}");
+        if let Some(ref prev_best) = best_run_ant
+            && prev_best.lenght < best_ant.get_path_lenght()
+        {
+            best_run_ant = Some(best_ant.into());
+        } else if best_run_ant.is_none() {
+            best_run_ant = Some(best_ant.into());
+        }
     }
 
-    last_run
+    best_run_ant
 }
 
 impl GeneticSelector {
+    #[must_use]
     pub fn new(
         parameter_range: ParametersRange,
         top_n: usize,
@@ -106,9 +110,9 @@ impl GeneticSelector {
                 if let Some(v) = self.eval_cache.get(&key) {
                     return Some(*v);
                 }
-                let sc = run_one(p, &self.tsp);
+
                 // caching skipped inside parallel loop to avoid locks
-                sc
+                run_one(p, &self.tsp).map(|ant| ant.lenght)
             })
             .progress_with(bar)
             .collect()
@@ -119,7 +123,6 @@ impl GeneticSelector {
     }
 
     pub fn sex(&mut self) {
-        // Elitism already handled in kill_dump by truncating; here we refill the population.
         let needed = self.target_population.saturating_sub(self.generation.len());
         if needed > 0 {
             let children: Vec<Parameters> = (0..needed)
@@ -223,12 +226,6 @@ impl GeneticSelector {
         };
         let mut child = Parameters {
             ants,
-            initial_pheromone_level: lerp_f(
-                rng,
-                p1.initial_pheromone_level,
-                p2.initial_pheromone_level,
-                alpha,
-            ),
             alpha: lerp_f(rng, p1.alpha, p2.alpha, alpha),
             beta: lerp_f(rng, p1.beta, p2.beta, alpha),
             tau0: lerp_f(rng, p1.tau0, p2.tau0, alpha),
@@ -242,8 +239,7 @@ impl GeneticSelector {
     fn mutate(&self, p: &mut Parameters, rng: &mut impl Rng) {
         let rate = self.mutation_rate;
         if rng.random_bool(rate) {
-            // integer mutation: +/- step scaled by span
-            let (ants_span, _, _, _, _, _) = self.parameter_range.spans();
+            let (ants_span, _, _, _, _) = self.parameter_range.spans();
             let step = ((ants_span as f64).sqrt().max(1.0)).round() as i64;
             let delta = rng.random_range(-step..=step);
             let new_val = p.ants as i64 + delta;
@@ -252,13 +248,11 @@ impl GeneticSelector {
         let mut n = |x: &mut f64, span: f64| {
             if rng.random_bool(rate) {
                 let sigma = (self.mutation_sigma * span).max(1e-9);
-                // Box-Muller approx via rand normal not available; use small uniform jitter as fallback
                 let jitter = rng.random_range(-sigma..=sigma);
                 *x += jitter;
             }
         };
-        let (_, ip_span, a_span, b_span, t_span, p_span) = self.parameter_range.spans();
-        n(&mut p.initial_pheromone_level, ip_span);
+        let (_, a_span, b_span, t_span, p_span) = self.parameter_range.spans();
         n(&mut p.alpha, a_span);
         n(&mut p.beta, b_span);
         n(&mut p.tau0, t_span);
@@ -270,7 +264,6 @@ impl GeneticSelector {
         let mut h = DefaultHasher::new();
         // Quantize floats to bits (stable) and hash fields
         p.ants.hash(&mut h);
-        p.initial_pheromone_level.to_bits().hash(&mut h);
         p.alpha.to_bits().hash(&mut h);
         p.beta.to_bits().hash(&mut h);
         p.tau0.to_bits().hash(&mut h);

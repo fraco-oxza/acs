@@ -46,10 +46,12 @@ impl SymmetricTSP {
         })
     }
 
+    #[must_use]
     pub fn distance_between(&self, c1_idx: usize, c2_idx: usize) -> f64 {
         self.coordinates[c1_idx].distance_to(&self.coordinates[c2_idx])
     }
 
+    #[must_use]
     pub fn path_length(&self, indexes: &[usize]) -> f64 {
         indexes
             .windows(2)

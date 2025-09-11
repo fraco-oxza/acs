@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{LazyLock, Mutex},
 };
 
 use rand::{
@@ -12,8 +12,7 @@ use rand::{
 use crate::{params::Parameters, pheromone_trail::PheromoneTrails, tsp::SymmetricTSP};
 
 pub type AntSet = HashSet<usize>;
-static NOT_VISITED_CACHE: LazyLock<Mutex<BTreeMap<usize, AntSet>>> =
-    LazyLock::new(|| Mutex::default());
+static NOT_VISITED_CACHE: LazyLock<Mutex<BTreeMap<usize, AntSet>>> = LazyLock::new(Mutex::default);
 
 fn get_set_of_not_visited(size: usize) -> AntSet {
     NOT_VISITED_CACHE
@@ -22,6 +21,21 @@ fn get_set_of_not_visited(size: usize) -> AntSet {
         .entry(size)
         .or_insert_with(|| (0..size).collect())
         .clone()
+}
+
+#[derive(Debug)]
+pub struct AntPath {
+    pub lenght: f64,
+    pub trace: Vec<usize>,
+}
+
+impl<'a, 'b> From<&Ant<'a, 'b>> for AntPath {
+    fn from(value: &Ant) -> Self {
+        AntPath {
+            lenght: value.path_lenght,
+            trace: value.path_arr.clone(),
+        }
+    }
 }
 
 pub struct Ant<'a, 'b> {
@@ -36,6 +50,7 @@ pub struct Ant<'a, 'b> {
 }
 
 impl<'a, 'b> Ant<'a, 'b> {
+    #[must_use]
     pub fn get_path_lenght(&self) -> f64 {
         let mut lenght = self.path_lenght;
 
@@ -48,6 +63,7 @@ impl<'a, 'b> Ant<'a, 'b> {
         lenght
     }
 
+    #[must_use]
     pub fn with_random_start(
         tsp: &'a SymmetricTSP,
         params: &'b Parameters,
