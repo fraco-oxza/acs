@@ -8,6 +8,7 @@ const DEFAULT_BETA: f64 = 2.4499;
 const DEFAULT_TAU0: f64 = 0.0;
 const DEFAULT_Q0: f64 = 0.231443;
 const DEFAULT_ITERATIONS: usize = 2000;
+const DEFAULT_LIMIT_WITHOUT_IMPROVEMENT: usize = 10000;
 
 #[derive(Parser)]
 pub struct Cli {
@@ -19,7 +20,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    Finetuning {},
+    Finetuning,
     Run {
         #[arg(short, long, default_value_t = DEFAULT_ANTS)]
         ants: usize,
@@ -33,5 +34,7 @@ pub enum Commands {
         p_of_take_best_path: f64,
         #[arg(short, long, default_value_t = DEFAULT_ITERATIONS)]
         iterations: usize,
+        #[arg(short, long, default_value_t = DEFAULT_LIMIT_WITHOUT_IMPROVEMENT)]
+        limit_without_improvement: usize,
     },
 }

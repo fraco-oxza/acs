@@ -7,7 +7,8 @@ use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use crate::{
     ant::{Ant, AntPath},
     client::{Cli, Commands},
-    params::Parameters,
+    natural_selection::GeneticSelector,
+    params::{Parameters, ParametersRange},
     pheromone_trail::PheromoneTrails,
     tsp::SymmetricTSP,
 };
@@ -20,9 +21,7 @@ pub mod params;
 pub mod pheromone_trail;
 pub mod tsp;
 
-const LIMIT_WITHOUT_IMPROVEMENT: usize = 100;
-
-fn command_run(parameters: &Parameters, t: &SymmetricTSP) {
+fn command_run(parameters: &Parameters, t: &SymmetricTSP, limit_without_improvement: usize) {
     let pt = PheromoneTrails::new(parameters, t.coordinates.len());
     let mut best_run_ant: Option<AntPath> = None;
     let bar = ProgressBar::new_spinner().with_style(
@@ -56,7 +55,7 @@ fn command_run(parameters: &Parameters, t: &SymmetricTSP) {
             best_run_ant = Some(best_ant.into());
         }
 
-        if with_out_improvement > LIMIT_WITHOUT_IMPROVEMENT {
+        if with_out_improvement > limit_without_improvement {
             break;
         }
 
@@ -83,6 +82,7 @@ fn main() {
             tau0,
             p_of_take_best_path,
             iterations,
+            limit_without_improvement,
         } => {
             command_run(
                 &Parameters {
@@ -94,30 +94,30 @@ fn main() {
                     iterations,
                 },
                 &t,
+                limit_without_improvement,
             );
         }
-        Commands::Finetuning {} => {}
-    }
+        Commands::Finetuning => {
+            let mut gs = GeneticSelector::new(
+                ParametersRange {
+                    ants: 1..=200,
+                    alpha: 0.0..=(1.0 - 1e-1),
+                    beta: 0.0..=20.0,
+                    tau0: 0.0..=5.0,
+                    p_of_take_best_path: 0.0..=1.0,
+                    iterations: 100..=1000,
+                },
+                100,
+                1000,
+                t,
+            );
 
-    // let mut gs = GeneticSelector::new(
-    //     ParametersRange {
-    //         ants: 1..=200,
-    //         initial_pheromone_level: 0.0..=1.0,
-    //         alpha: 0.0..=(1.0 - 1e-1),
-    //         beta: 0.0..=20.0,
-    //         tau0: 0.0..=5.0,
-    //         p_of_take_best_path: 0.0..=1.0,
-    //         iterations: 100..=1000,
-    //     },
-    //     100,
-    //     1000,
-    //     t,
-    // );
-    //
-    // gs.create_first_generation();
-    // loop {
-    //     let scores = gs.evaluate_generation();
-    //     gs.kill_dump(&scores);
-    //     gs.sex();
-    // }
+            gs.create_first_generation();
+            loop {
+                let scores = gs.evaluate_generation();
+                gs.kill_dump(&scores);
+                gs.sex();
+            }
+        }
+    }
 }
